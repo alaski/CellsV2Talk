@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">    
+<head>
+    <meta charset="utf-8">
+    <title>Nova Cells V2</title>
+    <link rel="stylesheet" href="css/reveal.css">
+    <link rel="stylesheet" href="css/theme/simple.css" id="theme"> 
+    <!--Add support for earlier versions of Internet Explorer -->
+    <!--[if lt IE 9]>
+    <script src="lib/js/html5shiv.js"></script>
+    <![endif]-->
+</head>
+ 
+<body>
+    <!-- Wrap the entire slide show in a div using the "reveal" class. -->
+    <div class="reveal">
+        <!-- Wrap all slides in a single "slides" class -->
+        <div class="slides">
+ 
+            <!-- ALL SLIDES GO HERE -->
+            <!-- Each section element contains an individual slide -->
+            <section>
+                <h1>Nova Cells V2</h1>
+                <p>What's going on?</p>        
+                <p>(I'm glad you asked!)</p>
+            </section>
+
+            <section>
+                <h2>What are cells?</h2>
+                <p>A strategy for scaling</p>
+                <pre>
++--------------+
+| Nova         |
+| DB           |
+| MessageQueue |
+| Hosts (1000) |
++--------------+
+
+
+
+
+
+
+
+                </pre>
+            </section>
+ 
+            <section>
+                <h2>What are cells?</h2>
+                <p>A strategy for scaling</p>
+                <pre>
+   +---------------------+   
+   |     API cell        |   
+   |DB                   |   
+   |MessageQueue(CellsV1)|   
+   +----+------------+---+   
+        |            |       
++-------+----+ +-----+------+
+|cell Foo    | |cell Bar    |
+|            | |            |
+|DB          | |DB          |
+|MessageQueue| |MessageQueue|
+|Hosts (500) | |Hosts (500) |
++------------+ +------------+
+                </pre>
+            </section>
+
+            <section>
+                <h2>What are cells?</h2>
+                <p>Failure isolation</p>
+                <pre>
+Instances in "Foo" still accessible
+   +---------------------+   
+   |     API cell        |   
+   |DB                   |   
+   |MessageQueue(CellsV1)|   
+   +----+------------+---+   
+        |                    
++-------+----+ +-----+------+
+|cell Foo    | |cell Bar    |
+|            | |            |
+|DB          | |<font color="red"><del>DB</del></font>          |
+|MessageQueue| |<font color="red"><del>MessageQueue</del></font>|
+|Hosts (500) | |Hosts (500) |
++------------+ +------------+
+                </pre>
+            </section>
+
+            <section>
+                <h2>What are cells?</h2>
+                <p>An optional grouping mechanism</p>
+                <p style="font-size:.6em;">(It is not required to do this)</p>
+                <ul>
+                    <li>Homogenous hardware in each cell</li>
+                    <li>Scale out deployments by adding new cells</li>
+                </ul>
+            </section>
+             <section>
+                <p style="font-size:1.0em;">That sounds great - there's already a cells V1, so why V2?</p>
+            </section>
+
+            <section>
+                <h2>V1 architecture and limitations</h2>
+                <ul>
+                    <li>Captures and replays messages</li>
+                    <li>Race conditions</li>
+                    <li>Two levels of scheduling</li>
+                    <ul>
+                        <li>Top level scheduler has limited and coarse data</li>
+                    </ul>
+                    <li>Lacking features</li>
+                    <ul>
+                        <li>Security groups</li>
+                        <li>Host aggregates</li>
+                        <li>Availability zones</li>
+                        <li>Limited global scheduling options</li>
+                    </ul>
+                </ul>
+            </section>
+
+            <section>
+                <h2>V1 architecture and limitations</h2>
+                <ul>
+                    <li>Bolted on</li>
+                    <ul>
+                        <li>Few deployments use it</li>
+                        <li>Most developers not familiar with it</li>
+                        <li>Difficult to upgrade from Nova without cells to Nova with cells</li>
+                    </ul>
+                </ul>
+                <br/>
+                <br/>
+                <br/>
+                <br/>
+                <br/>
+            </section>
+
+            <section>
+                <h2>Lessons learned</h2>
+                <ul>
+                    <li>Don't duplicate data</li>
+                    <li>Everyone needs to use it (i.e., main code path)</li>
+                    <li>Parent cell still doesn't scale well</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>V2 architecture</h2>
+                <p>Principles based on lessons learned</p>
+                <ul>
+                    <li>Data only in one place</li>
+                    <li>Only way to deploy Nova</li>
+                    <li>As little global data as possible</li>
+                </ul>
+            </section>
+
+            <section>
+                <h3><b>Data only in one place</b></h3>
+                <ul>
+                    <li>New nova_api database</li>
+                    <ul>
+                        <li>Lives in the API cell</li>
+                        <li>Stores global data (e.g., flavors)</li>
+                        <ul>
+                            <li>These have been migrated out of the Nova database</li>
+                        </ul>
+                        <li>Stores mappings to cells, instances, computes</li>
+                    </ul>
+                </ul>
+            </section>
+
+            <section>
+                <h3><b>Only way to deploy Nova</b></h3>
+                <ul>
+                    <li>Nova: now powered by cells!</li>
+                    <ul>
+                        <li>No more "Should we use cells?"</li>
+                    </ul>
+                    <li>All features work*</li>
+                </ul>
+                <br/>
+                <br/>
+                <p style="font-size:.6em;">*We'll talk about nova-net later</p>
+            </section>
+
+            <section>
+                <h3><b>As little global data as possible</b></h3>
+                <ul>
+                    <li>Mappings are small pointers to "heavy" data in each cell</li>
+                    <li>Avoid things that scale with the number of instances/hosts</li>
+                </ul>
+                <br/>
+                <br/>
+                <br/>
+                <br/>
+            </section>
+
+            <section>
+                <h3><b>Putting it all together</b></h3>
+                <pre>
+                           +-------------------------------------+    
+                           |               <b>API cell</b>              |    
+                           |                                     |    
+                           | nova-api(s)       nova_api DB       |    
+                           |                                     |    
++----------------------+   | nova-conductor(s) nova-scheduler(s) |    
+|      <b>cell0</b>           <---+                                     |    
+|                      |   +------------+------------------+-----+    
+| nova DB              |                |                  |          
+| (scheduler failures) |  +-------------+-----+  +---------+---------+
+|                      |  |   <b>cell Foo</b>        |  |   <b>cell Bar</b>        |
+| no nova-conductor    |  |                   |  |                   |
+| no MessageQueue      |  | nova DB           |  | nova DB           |
+| no nova-compute      |  |                   |  |                   |
+|                      |  | MessageQueue      |  | MessageQueue      |
++----------------------+  |                   |  |                   |
+                          | nova-conductor(s) |  | nova-conductor(s) |
+                          |                   |  |                   |
+                          | nova-compute(s)   |  | nova-compute(s)   |
+                          |                   |  |                   |
+                          +-------------------+  +-------------------+
+                </pre>
+            </section>
+ 
+            <section>
+                <h2>So, what's been done</h2>
+                <ul>
+                    <li>nova_api database</li>
+                    <li>Database connection switching</li>
+                    <li>Upgrade tools</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>What is happening in Newton</h2>
+                <ul>
+                    <li>Flavor migration to nova_api database</li>
+                    <li>Boot process, scheduling</li>
+                    <li>Cell0</li>
+                    <li>More, and simpler, upgrade tools</li>
+                    <li>MessageQueue connection switching</li>
+                    <li>More migrations to the nova_api database</li>
+                    <ul>
+                        <li>Aggregate tables</li>
+                        <li>Quotas</li>
+                    </ul>
+                    <li>Begining multiple cells support</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>And beyond...</h2>
+                <ul>
+                    <li>More scheduling control</li>
+                    <li>Finish multiple cells support</li>
+                    <li>Cells V1->V2 upgrade tools</li>
+                    <ul>
+                        <li>You are not forgotten!</li>
+                    </ul>
+                </ul>
+            </section>
+
+            <section>
+                <h2>Upgrade process, simple</h2>
+                <br/>
+                <pre style="text-align:left;">
+nova-manage api_db sync (Required in Mitaka)
+
+nova-manage cell_v2 simple_cell_setup --transport_url &lt;transport_url&gt;
+                </pre>
+                <ul style="font-size:1em;">
+                    <li>Cell0 shares a database server with the nova_api database</li>
+                    <li>All active hosts in the nova database are migrated</li>
+                    <li>All instances in the nova database are migrated</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>Upgrade process, custom</h2>
+                <br/>
+                <pre style="text-align:left;">
+nova-manage api_db sync (Required in Mitaka)
+
+nova-manage cell_v2 map_cell0 --database_connection &lt;connection_str&gt;
+
+nova-manage cell_v2 map_cell_and_hosts --transport_url &lt;transport_url&gt; --name &lt;name&gt;
+
+nova-manage cell_v2 map_instances --cell_uuid &lt;uuid&gt; --max-count &lt;count&gt;
+                </pre>
+                <ul style="font-size:1em;">
+                    <li>All active hosts in the nova database are migrated</li>
+                    <li>All instances in the nova database are migrated</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>Caveats</h2>
+                <ul>
+                    <li>Partial listings for multi-cell</li>
+                    <li>Networking</li>
+                    <ul>
+                        <li>In progress for Neutron</li>
+                        <li>Nova-net not planned, under discussion</li>
+                    </ul>
+                    <li>May encounter obstacles as number of cells grow "unknown unkowns"</li>
+                    <ul>
+                        <li>These will be addressed as they come up</li>
+                    </ul>
+                </ul>
+            </section>
+
+            <section>
+                <h2>Cells V2, expected Fall 2016!</h2>
+                <h2 style="color:#333;">Questions?</h2>
+            </section>
+
+            <!-- End of slides here -->
+ 
+            </div>
+    </div>
+    <script src="lib/js/head.min.js"></script>
+    <script src="js/reveal.js"></script>
+ 
+    <script>
+        // Required, even if empty.
+        Reveal.initialize({
+            controls: false,
+            history: true,
+            dependencies: [
+                // Speaker notes
+                { src: 'plugin/notes/notes.js', async: true }]
+        });
+    </script>
+</body>
+</html>
